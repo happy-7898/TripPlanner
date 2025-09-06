@@ -90,7 +90,58 @@ const verifyOtp = async (req, res) => {
   }
 };
 
+const login = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return sendError(res, "Email and password are required", 400);
+    }
+
+    const user = await User.findOne({ where: { email } });
+
+    if (!user || !user.isRegistered) {
+      return sendError(res, "User not found", 404);
+    }
+
+    const isPasswordValid = await compareData(password, user.password);
+
+    if (!isPasswordValid) {
+      return sendError(res, "Invalid credentials", 401);
+    }
+
+    const payload = { id: user.id, email: user.email };
+
+    const accessToken = generateAccessToken(payload);
+    const refreshToken = generateRefreshToken(payload);
+
+    return sendSuccess(res, { accessToken, refreshToken }, "Login successful");
+  } catch (error) {
+    console.error("Login error:", error);
+    sendError(res, "Internal server error", 500);
+  }
+};
+
+const getMe = async (req, res) => {
+  try {
+    const user = await User.findByPk(req.user.id, {
+      attributes: { exclude: ["password", "isRegistered", "createdAt", "updatedAt"] },
+    });
+
+    if (!user) {
+      return sendError(res, "User not found", 404);
+    }
+
+    return sendSuccess(res, user, "User profile fetched successfully");
+  } catch (error) {
+    console.error("GetMe error:", error);
+    sendError(res, "Internal server error", 500);
+  }
+};
+
 module.exports = {
   signup,
   verifyOtp,
+  login,
+  getMe,
 };
