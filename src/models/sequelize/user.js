@@ -27,8 +27,8 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: true,
         validate: {
           is: {
-            args: /^[0-9]{10,15}$/,
-            msg: "Phone number must be between 10 and 15 digits",
+            args: [/^\+?[0-9]{10,15}$/],
+            msg: "Phone number must be between 10 and 15 digits and can start with +",
           },
         },
       },

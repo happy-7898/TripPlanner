@@ -15,6 +15,7 @@ module.exports = {
     },
   },
   "PORT": process.env.PORT,
+  "MONGODB_URI": process.env.MONGODB_URI,
   "BREVO_API_KEY": process.env.BREVO_API_KEY,
   "BREVO_SENDER_NAME": process.env.BREVO_SENDER_NAME,
   "BREVO_SENDER_MAIL": process.env.BREVO_SENDER_MAIL,
@@ -23,4 +24,7 @@ module.exports = {
   "ACCESS_TOKEN_EXPIRY": process.env.ACCESS_TOKEN_EXPIRY,
   "REFRESH_TOKEN_SECRET": process.env.REFRESH_TOKEN_SECRET,
   "REFRESH_TOKEN_EXPIRY": process.env.REFRESH_TOKEN_EXPIRY,
+  "GEMINI_API_KEY": process.env.GEMINI_API_KEY,
+  "UNSPLASH_ACCESS_KEY": process.env.UNSPLASH_ACCESS_KEY,
+  "UNSPLASH_SECRET_KEY": process.env.UNSPLASH_SECRET_KEY,
 };

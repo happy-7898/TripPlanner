@@ -4,6 +4,7 @@ const { sendOTP } = require("../services/sendOtp.service");
 const { sendError, sendSuccess } = require("../utils/responseHandler.util");
 const { hashData, compareData } = require("../utils/bcrypt.util");
 const { generateAccessToken, generateRefreshToken } = require("../utils/token.util");
+const LoginSession = require("../models/mongoose/loginSession");
 
 const signup = async (req, res) => {
   try {
@@ -50,9 +51,11 @@ const signup = async (req, res) => {
 const verifyOtp = async (req, res) => {
   try {
     const { userId, otp } = req.body;
+    const deviceId = req.headers["x-device-id"];
+    const { origin } = req.query;
 
-    if (!userId || !otp) {
-      return sendError(res, "User ID and OTP are required", 400);
+    if (!userId || !otp || !deviceId) {
+      return sendError(res, "User ID, OTP, and deviceId are required", 400);
     }
 
     const otpRecord = await Otp.findOne({ where: { userId } });
@@ -73,8 +76,14 @@ const verifyOtp = async (req, res) => {
 
     const user = await User.findByPk(userId);
 
-    user.isRegistered = true;
-    await user.save();
+    if (origin === "registration" && user.isRegistered) {
+      return sendError(res, "User is already registered. Please login.", 400);
+    }
+
+    if (origin === "registration") {
+      user.isRegistered = true;
+      await user.save();
+    }
 
     await Otp.destroy({ where: { userId } });
 
@@ -83,7 +92,17 @@ const verifyOtp = async (req, res) => {
     const accessToken = generateAccessToken(payload);
     const refreshToken = generateRefreshToken(payload);
 
-    return sendSuccess(res, { accessToken, refreshToken }, "OTP verified successfully. User registered.");
+    await LoginSession.findOneAndUpdate(
+      { userId, deviceId },
+      {
+        accessToken,
+        refreshToken,
+        updatedAt: new Date(),
+      },
+      { upsert: true, new: true },
+    );
+
+    return sendSuccess(res, { accessToken, refreshToken }, "OTP verified successfully.");
   } catch (error) {
     console.error("Verify OTP error:", error);
     sendError(res, "Internal server error", 500);
@@ -93,9 +112,10 @@ const verifyOtp = async (req, res) => {
 const login = async (req, res) => {
   try {
     const { email, password } = req.body;
+    const deviceId = req.headers["x-device-id"];
 
-    if (!email || !password) {
-      return sendError(res, "Email and password are required", 400);
+    if (!email || !password || !deviceId) {
+      return sendError(res, "Email, password, and deviceId are required", 400);
     }
 
     const user = await User.findOne({ where: { email } });
@@ -103,7 +123,6 @@ const login = async (req, res) => {
     if (!user || !user.isRegistered) {
       return sendError(res, "User not found", 404);
     }
-
     const isPasswordValid = await compareData(password, user.password);
 
     if (!isPasswordValid) {
@@ -115,6 +134,12 @@ const login = async (req, res) => {
     const accessToken = generateAccessToken(payload);
     const refreshToken = generateRefreshToken(payload);
 
+    await LoginSession.findOneAndUpdate(
+      { userId: user.id, deviceId },
+      { accessToken, refreshToken, updatedAt: new Date() },
+      { new: true },
+    );
+
     return sendSuccess(res, { accessToken, refreshToken }, "Login successful");
   } catch (error) {
     console.error("Login error:", error);
@@ -122,20 +147,104 @@ const login = async (req, res) => {
   }
 };
 
-const getMe = async (req, res) => {
+const forgotPassword = async (req, res) => {
   try {
-    const user = await User.findByPk(req.user.id, {
-      attributes: { exclude: ["password", "isRegistered", "createdAt", "updatedAt"] },
+    const { email } = req.body;
+
+    if (!email) {
+      return sendError(res, "Email is required", 400);
+    }
+
+    const user = await User.findOne({ where: { email } });
+
+    if (!user || !user.isRegistered) {
+      return sendError(res, "User not found", 404);
+    }
+
+    const otpCode = generateOTP();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    const hashedOtp = await hashData(otpCode);
+
+    await Otp.upsert({
+      userId: user.id,
+      otp: hashedOtp,
+      expiresAt,
     });
+
+    await sendOTP(email, otpCode);
+
+    return sendSuccess(res, { userId: user.id }, "Password reset OTP sent successfully");
+  } catch (error) {
+    console.error("ForgotPassword error:", error);
+    sendError(res, "Internal server error", 500);
+  }
+};
+
+const resetPassword = async (req, res) => {
+  try {
+    const { password: newPassword } = req.body;
+    const { id: userId } = req.user;
+
+    if (!userId || !newPassword) {
+      return sendError(res, "User ID and new password are required", 400);
+    }
+
+    const user = await User.findByPk(userId);
 
     if (!user) {
       return sendError(res, "User not found", 404);
     }
 
-    return sendSuccess(res, user, "User profile fetched successfully");
+    const hashedPassword = await hashData(newPassword);
+
+    user.password = hashedPassword;
+    await user.save();
+
+    return sendSuccess(res, null, "Password reset successful");
   } catch (error) {
-    console.error("GetMe error:", error);
+    console.error("ResetPassword error:", error);
     sendError(res, "Internal server error", 500);
+  }
+};
+
+const refreshAccessToken = async (req, res) => {
+  try {
+    const deviceId = req.headers["x-device-id"];
+
+    if (!deviceId) {
+      return sendError(res, "deviceId is required", 400);
+    }
+    const payload = { id: req.user.id, email: req.user.email };
+
+    const accessToken = generateAccessToken(payload);
+
+    await LoginSession.findOneAndUpdate(
+      { userId: req.user.id, deviceId },
+      { accessToken, updatedAt: new Date() },
+      { new: true },
+    );
+
+    return sendSuccess(res, { accessToken }, "New access token generated");
+  } catch (error) {
+    console.error("Refresh token error:", error);
+    return sendError(res, "Internal server error", 500);
+  }
+};
+
+const logout = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const user = await User.findByPk(userId);
+
+    if (!user) {
+      return sendError(res, "User not found", 404);
+    }
+
+    return sendSuccess(res, null, "Logged out successfully");
+  } catch (error) {
+    console.error("Logout error:", error);
+    return sendError(res, "Server error");
   }
 };
 
@@ -143,5 +252,8 @@ module.exports = {
   signup,
   verifyOtp,
   login,
-  getMe,
+  forgotPassword,
+  resetPassword,
+  refreshAccessToken,
+  logout,
 };
